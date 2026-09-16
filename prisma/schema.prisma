@@ -1,0 +1,987 @@
+// Servio Hospitality Platform - Production PostgreSQL Database Schema
+// Generator & DataSource Setup
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// 1. CORE & PROPERTY MANAGEMENT MODULE
+// ==========================================
+
+model Property {
+  id           String   @id @default(uuid())
+  code         String   @unique @db.VarChar(20)
+  name         String   @db.VarChar(100)
+  legalName    String?  @db.VarChar(150)
+  timezone     String   @default("Africa/Nairobi") @db.VarChar(50)
+  currency     String   @default("KES") @db.VarChar(10)
+  address      String?  @db.Text
+  phone        String?  @db.VarChar(30)
+  email        String?  @db.VarChar(100)
+  taxNumber    String?  @db.VarChar(50)
+  createdAt    DateTime @default(now()) @db.Timestamptz
+  updatedAt    DateTime @updatedAt @db.Timestamptz
+
+  users            User[]
+  roomTypes        RoomType[]
+  rooms            Room[]
+  reservations     Reservation[]
+  outlets          RestaurantOutlet[]
+  inventoryItems   InventoryItem[]
+  inventoryLocs    InventoryLocation[]
+  suppliers        Supplier[]
+  purchaseOrders   PurchaseOrder[]
+  payments         Payment[]
+  expenses         Expense[]
+  auditLogs        AuditLog[]
+
+  @@map("properties")
+}
+
+// ==========================================
+// 2. STAFF & AUTHENTICATION (RBAC)
+// ==========================================
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique @db.VarChar(50)
+  description String?  @db.VarChar(255)
+  permissions String[] // Array of granular permission keys e.g. ["reservations:create", "folios:post"]
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  updatedAt   DateTime @updatedAt @db.Timestamptz
+
+  users User[]
+
+  @@map("roles")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  propertyId   String
+  roleId       String
+  email        String    @unique @db.VarChar(100)
+  passwordHash String    @db.VarChar(255)
+  firstName    String    @db.VarChar(50)
+  lastName     String    @db.VarChar(50)
+  phone        String?   @db.VarChar(30)
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime? @db.Timestamptz
+  createdAt    DateTime  @default(now()) @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @db.Timestamptz
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  role     Role     @relation(fields: [roleId], references: [id], onDelete: Restrict)
+
+  auditLogs          AuditLog[]
+  housekeepingLogs   HousekeepingLog[] @relation("AssignedHousekeeper")
+  inspectedLogs      HousekeepingLog[] @relation("HousekeepingInspector")
+  waiterOrders       PosOrder[]        @relation("WaiterOrders")
+  stockMovements     StockMovement[]
+  postedTransactions FolioItem[]
+  approvedPOs        PurchaseOrder[]   @relation("PoApprover")
+
+  @@index([propertyId])
+  @@index([email])
+  @@map("users")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  propertyId String
+  userId     String?
+  action     String   @db.VarChar(50) // e.g. PAYMENT_REFUNDED, RESERVATION_CANCELLED
+  entity     String   @db.VarChar(50) // e.g. Reservation, FolioItem, Payment
+  entityId   String   @db.VarChar(100)
+  oldData    Json?
+  newData    Json?
+  ipAddress  String?  @db.VarChar(45)
+  userAgent  String?  @db.VarChar(255)
+  createdAt  DateTime @default(now()) @db.Timestamptz
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([propertyId, createdAt])
+  @@index([entity, entityId])
+  @@map("audit_logs")
+}
+
+// ==========================================
+// 3. HOTEL PMS DOMAIN
+// ==========================================
+
+model RoomType {
+  id          String   @id @default(uuid())
+  propertyId  String
+  code        String   @db.VarChar(20)
+  name        String   @db.VarChar(100)
+  description String?  @db.Text
+  baseRate    Decimal  @db.Decimal(12, 2)
+  capacity    Int      @default(2)
+  maxExtraBed Int      @default(1)
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  updatedAt   DateTime @updatedAt @db.Timestamptz
+
+  property  Property   @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  rooms     Room[]
+  roomRates RoomRate[]
+
+  @@unique([propertyId, code])
+  @@map("room_types")
+}
+
+enum RoomStatus {
+  CLEAN
+  DIRTY
+  INSPECTED
+  OUT_OF_SERVICE
+}
+
+enum RoomOccupancyStatus {
+  VACANT
+  OCCUPIED
+}
+
+model Room {
+  id              String              @id @default(uuid())
+  propertyId      String
+  roomTypeId      String
+  roomNumber      String              @db.VarChar(20)
+  floor           Int                 @default(1)
+  status          RoomStatus          @default(CLEAN)
+  occupancyStatus RoomOccupancyStatus @default(VACANT)
+  isBlocked       Boolean             @default(false)
+  blockReason     String?             @db.VarChar(255)
+  createdAt       DateTime            @default(now()) @db.Timestamptz
+  updatedAt       DateTime            @updatedAt @db.Timestamptz
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Restrict)
+
+  assignments      ReservationRoom[]
+  housekeepingLogs HousekeepingLog[]
+  maintenance      MaintenanceTicket[]
+  posOrders        PosOrder[]          @relation("RoomServiceDeliveries")
+
+  @@unique([propertyId, roomNumber])
+  @@index([propertyId, status, occupancyStatus])
+  @@map("rooms")
+}
+
+model RoomRate {
+  id         String   @id @default(uuid())
+  roomTypeId String
+  rateName   String   @db.VarChar(50)
+  price      Decimal  @db.Decimal(12, 2)
+  startDate  DateTime @db.Date
+  endDate    DateTime @db.Date
+  createdAt  DateTime @default(now()) @db.Timestamptz
+
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+
+  @@index([roomTypeId, startDate, endDate])
+  @@map("room_rates")
+}
+
+model Guest {
+  id          String   @id @default(uuid())
+  firstName   String   @db.VarChar(50)
+  lastName    String   @db.VarChar(50)
+  email       String?  @db.VarChar(100)
+  phone       String   @db.VarChar(30)
+  idType      String?  @db.VarChar(30) // NATIONAL_ID, PASSPORT, DRIVERS_LICENSE
+  idNumber    String?  @db.VarChar(50)
+  nationality String?  @db.VarChar(50)
+  isVip       Boolean  @default(false)
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  updatedAt   DateTime @updatedAt @db.Timestamptz
+
+  documents    GuestDocument[]
+  reservations ReservationGuest[]
+  mainBookings Reservation[]     @relation("PrimaryBooker")
+
+  @@index([phone])
+  @@index([email])
+  @@index([idNumber])
+  @@map("guests")
+}
+
+model GuestDocument {
+  id         String   @id @default(uuid())
+  guestId    String
+  docType    String   @db.VarChar(50)
+  fileUrl    String   @db.VarChar(255)
+  uploadedAt DateTime @default(now()) @db.Timestamptz
+
+  guest Guest @relation(fields: [guestId], references: [id], onDelete: Cascade)
+
+  @@map("guest_documents")
+}
+
+enum ReservationStatus {
+  CONFIRMED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+  NO_SHOW
+}
+
+model Reservation {
+  id                String            @id @default(uuid())
+  propertyId        String
+  primaryGuestId    String
+  reservationNumber String            @unique @db.VarChar(30)
+  status            ReservationStatus @default(CONFIRMED)
+  checkInDate       DateTime          @db.Date
+  checkOutDate      DateTime          @db.Date
+  adultsCount       Int               @default(1)
+  childrenCount     Int               @default(0)
+  totalAmount       Decimal           @db.Decimal(12, 2)
+  depositPaid       Decimal           @default(0.00) @db.Decimal(12, 2)
+  specialRequests   String?           @db.Text
+  cancelledAt       DateTime?         @db.Timestamptz
+  cancellationNote  String?           @db.VarChar(255)
+  createdAt         DateTime          @default(now()) @db.Timestamptz
+  updatedAt         DateTime          @updatedAt @db.Timestamptz
+
+  property     Property           @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  primaryGuest Guest              @relation("PrimaryBooker", fields: [primaryGuestId], references: [id], onDelete: Restrict)
+  assignedRooms ReservationRoom[]
+  guests       ReservationGuest[]
+  folio        GuestFolio?
+
+  @@index([propertyId, checkInDate, checkOutDate])
+  @@index([status])
+  @@map("reservations")
+}
+
+model ReservationRoom {
+  id            String    @id @default(uuid())
+  reservationId String
+  roomId        String
+  nightlyRate   Decimal   @db.Decimal(12, 2)
+  assignedAt    DateTime  @default(now()) @db.Timestamptz
+  releasedAt    DateTime? @db.Timestamptz
+
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  room        Room        @relation(fields: [roomId], references: [id], onDelete: Restrict)
+
+  @@index([reservationId, roomId])
+  @@map("reservation_rooms")
+}
+
+model ReservationGuest {
+  reservationId String
+  guestId       String
+  isPrimary     Boolean @default(false)
+
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  guest       Guest       @relation(fields: [guestId], references: [id], onDelete: Cascade)
+
+  @@id([reservationId, guestId])
+  @@map("reservation_guests")
+}
+
+model HousekeepingLog {
+  id               String   @id @default(uuid())
+  roomId           String
+  assignedStaffId  String?
+  inspectedById    String?
+  status           String   @default("PENDING") @db.VarChar(20) // PENDING, IN_PROGRESS, COMPLETED
+  taskNotes        String?  @db.Text
+  completedAt      DateTime? @db.Timestamptz
+  createdAt        DateTime @default(now()) @db.Timestamptz
+
+  room           Room  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  assignedStaff  User? @relation("AssignedHousekeeper", fields: [assignedStaffId], references: [id], onDelete: SetNull)
+  inspector      User? @relation("HousekeepingInspector", fields: [inspectedById], references: [id], onDelete: SetNull)
+
+  @@map("housekeeping_logs")
+}
+
+model MaintenanceTicket {
+  id          String   @id @default(uuid())
+  roomId      String
+  title       String   @db.VarChar(100)
+  description String   @db.Text
+  priority    String   @default("MEDIUM") @db.VarChar(20) // LOW, MEDIUM, HIGH, URGENT
+  status      String   @default("OPEN") @db.VarChar(20) // OPEN, IN_PROGRESS, RESOLVED
+  reportedAt  DateTime @default(now()) @db.Timestamptz
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@map("maintenance_tickets")
+}
+
+// ==========================================
+// 4. RESTAURANT & POS DOMAIN
+// ==========================================
+
+enum OutletType {
+  DINE_IN
+  BAR
+  ROOM_SERVICE
+  TAKEAWAY
+}
+
+model RestaurantOutlet {
+  id         String     @id @default(uuid())
+  propertyId String
+  name       String     @db.VarChar(100)
+  type       OutletType @default(DINE_IN)
+  createdAt  DateTime   @default(now()) @db.Timestamptz
+
+  property   Property         @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  areas      DiningArea[]
+  categories MenuCategory[]
+  posOrders  PosOrder[]
+  kdsStations KitchenStation[]
+
+  @@map("restaurant_outlets")
+}
+
+model DiningArea {
+  id       String @id @default(uuid())
+  outletId String
+  name     String @db.VarChar(50)
+
+  outlet RestaurantOutlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  tables DiningTable[]
+
+  @@map("dining_areas")
+}
+
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+  DIRTY
+}
+
+model DiningTable {
+  id          String      @id @default(uuid())
+  areaId      String
+  tableNumber String      @db.VarChar(20)
+  capacity    Int         @default(4)
+  status      TableStatus @default(AVAILABLE)
+
+  area      DiningArea @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  posOrders PosOrder[]
+
+  @@map("dining_tables")
+}
+
+model MenuCategory {
+  id           String   @id @default(uuid())
+  outletId     String
+  name         String   @db.VarChar(50)
+  displayOrder Int      @default(0)
+  isActive     Boolean  @default(true)
+
+  outlet    RestaurantOutlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  menuItems MenuItem[]
+
+  @@map("menu_categories")
+}
+
+model MenuItem {
+  id          String   @id @default(uuid())
+  categoryId  String
+  name        String   @db.VarChar(100)
+  code        String   @db.VarChar(20)
+  description String?  @db.Text
+  price       Decimal  @db.Decimal(12, 2)
+  taxRate     Decimal  @default(16.00) @db.Decimal(5, 2)
+  isAvailable Boolean  @default(true)
+  imageUrl    String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @db.Timestamptz
+
+  category   MenuCategory      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  variants   MenuItemVariant[]
+  modifiers  MenuModifierGroup[]
+  orderItems PosOrderItem[]
+  recipes    Recipe[]
+
+  @@unique([categoryId, code])
+  @@map("menu_items")
+}
+
+model MenuItemVariant {
+  id            String  @id @default(uuid())
+  menuItemId    String
+  name          String  @db.VarChar(50) // e.g. Small, Large, Pitcher
+  priceModifier Decimal @default(0.00) @db.Decimal(12, 2)
+
+  menuItem   MenuItem       @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  orderItems PosOrderItem[]
+  recipes    Recipe[]
+
+  @@map("menu_item_variants")
+}
+
+model MenuModifierGroup {
+  id           String  @id @default(uuid())
+  menuItemId   String
+  name         String  @db.VarChar(50) // e.g. Choice of Sauce, Meat Doneness
+  minSelection Int     @default(0)
+  maxSelection Int     @default(1)
+
+  menuItem  MenuItem       @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  modifiers MenuModifier[]
+
+  @@map("menu_modifier_groups")
+}
+
+model MenuModifier {
+  id      String  @id @default(uuid())
+  groupId String
+  name    String  @db.VarChar(50)
+  price   Decimal @default(0.00) @db.Decimal(12, 2)
+
+  group              MenuModifierGroup       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  selectedInOrderLines PosOrderItemModifier[]
+
+  @@map("menu_modifiers")
+}
+
+enum OrderType {
+  DINE_IN
+  TAKEAWAY
+  ROOM_SERVICE
+}
+
+enum PosOrderStatus {
+  OPEN
+  SENT_TO_KITCHEN
+  COMPLETED
+  CANCELLED
+}
+
+model PosOrder {
+  id             String         @id @default(uuid())
+  outletId       String
+  tableId        String?
+  roomId         String?
+  guestFolioId   String?
+  waiterId       String
+  orderNumber    String         @unique @db.VarChar(30)
+  orderType      OrderType      @default(DINE_IN)
+  status         PosOrderStatus @default(OPEN)
+  subtotal       Decimal        @db.Decimal(12, 2)
+  taxAmount      Decimal        @db.Decimal(12, 2)
+  discountAmount Decimal        @default(0.00) @db.Decimal(12, 2)
+  totalAmount    Decimal        @db.Decimal(12, 2)
+  notes          String?        @db.Text
+  idempotencyKey String?        @unique @db.VarChar(100)
+  createdAt      DateTime       @default(now()) @db.Timestamptz
+  updatedAt      DateTime       @updatedAt @db.Timestamptz
+
+  outlet     RestaurantOutlet @relation(fields: [outletId], references: [id], onDelete: Restrict)
+  table      DiningTable?     @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  deliveryRoom Room?          @relation("RoomServiceDeliveries", fields: [roomId], references: [id], onDelete: SetNull)
+  guestFolio GuestFolio?      @relation(fields: [guestFolioId], references: [id], onDelete: SetNull)
+  waiter     User             @relation("WaiterOrders", fields: [waiterId], references: [id], onDelete: Restrict)
+
+  orderItems     PosOrderItem[]
+  kitchenTicket  KitchenTicket?
+  payments       Payment[]
+
+  @@index([outletId, status])
+  @@index([createdAt])
+  @@map("pos_orders")
+}
+
+model PosOrderItem {
+  id         String  @id @default(uuid())
+  orderId    String
+  menuItemId String
+  variantId  String?
+  quantity   Int     @default(1)
+  unitPrice  Decimal @db.Decimal(12, 2)
+  totalPrice Decimal @db.Decimal(12, 2)
+  notes      String? @db.VarChar(255)
+
+  order    PosOrder         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItem MenuItem         @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+  variant  MenuItemVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  modifiers    PosOrderItemModifier[]
+  ticketLines  KitchenTicketItem[]
+
+  @@map("pos_order_items")
+}
+
+model PosOrderItemModifier {
+  orderItemId String
+  modifierId  String
+  unitPrice   Decimal @db.Decimal(12, 2)
+
+  orderItem PosOrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  modifier  MenuModifier @relation(fields: [modifierId], references: [id], onDelete: Restrict)
+
+  @@id([orderItemId, modifierId])
+  @@map("pos_order_item_modifiers")
+}
+
+// ==========================================
+// 5. KITCHEN DISPLAY SYSTEM (KDS)
+// ==========================================
+
+model KitchenStation {
+  id       String @id @default(uuid())
+  outletId String
+  name     String @db.VarChar(50) // Hot Line, Grill, Pastry, Bar
+  code     String @db.VarChar(20)
+
+  outlet  RestaurantOutlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+  tickets KitchenTicket[]
+
+  @@map("kitchen_stations")
+}
+
+enum KdsTicketStatus {
+  NEW
+  ACCEPTED
+  PREPARING
+  READY
+  SERVED
+  COMPLETED
+}
+
+model KitchenTicket {
+  id           String          @id @default(uuid())
+  orderId      String          @unique
+  stationId    String
+  ticketNumber String          @db.VarChar(30)
+  status       KdsTicketStatus @default(NEW)
+  priority     Int             @default(1)
+  acceptedAt   DateTime?       @db.Timestamptz
+  preparedAt   DateTime?       @db.Timestamptz
+  servedAt     DateTime?       @db.Timestamptz
+  createdAt    DateTime        @default(now()) @db.Timestamptz
+  updatedAt    DateTime        @updatedAt @db.Timestamptz
+
+  order   PosOrder       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  station KitchenStation @relation(fields: [stationId], references: [id], onDelete: Restrict)
+
+  ticketItems KitchenTicketItem[]
+
+  @@index([stationId, status])
+  @@map("kitchen_tickets")
+}
+
+model KitchenTicketItem {
+  id             String          @id @default(uuid())
+  ticketId       String
+  posOrderItemId String
+  quantity       Int
+  status         KdsTicketStatus @default(NEW)
+
+  ticket       KitchenTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  posOrderItem PosOrderItem  @relation(fields: [posOrderItemId], references: [id], onDelete: Cascade)
+
+  @@map("kitchen_ticket_items")
+}
+
+// ==========================================
+// 6. INVENTORY & PANTRY DOMAIN
+// ==========================================
+
+model InventoryCategory {
+  id   String @id @default(uuid())
+  name String @unique @db.VarChar(50) // Dry Goods, Meats, Dairy, Beverages
+
+  items InventoryItem[]
+
+  @@map("inventory_categories")
+}
+
+model InventoryItem {
+  id          String   @id @default(uuid())
+  propertyId  String
+  categoryId  String
+  sku         String   @db.VarChar(30)
+  name        String   @db.VarChar(100)
+  uom         String   @db.VarChar(20) // KG, LITER, PCS, PACK
+  minStock    Decimal  @default(10.00) @db.Decimal(12, 4)
+  maxStock    Decimal  @default(500.00) @db.Decimal(12, 4)
+  costPrice   Decimal  @db.Decimal(12, 2)
+  createdAt   DateTime @default(now()) @db.Timestamptz
+  updatedAt   DateTime @updatedAt @db.Timestamptz
+
+  property Property          @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  category InventoryCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  batches           StockBatch[]
+  movements         StockMovement[]
+  recipeIngredients RecipeIngredient[]
+  poItems           PurchaseOrderItem[]
+
+  @@unique([propertyId, sku])
+  @@index([propertyId, name])
+  @@map("inventory_items")
+}
+
+enum LocationType {
+  MAIN_STORE
+  KITCHEN_PANTRY
+  BAR_STORE
+}
+
+model InventoryLocation {
+  id         String       @id @default(uuid())
+  propertyId String
+  name       String       @db.VarChar(50)
+  type       LocationType @default(MAIN_STORE)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+
+  batches   StockBatch[]
+  movements StockMovement[]
+
+  @@map("inventory_locations")
+}
+
+model StockBatch {
+  id              String    @id @default(uuid())
+  inventoryItemId String
+  locationId      String
+  batchNumber     String    @db.VarChar(50)
+  quantity        Decimal   @db.Decimal(12, 4)
+  costPrice       Decimal   @db.Decimal(12, 2)
+  expiryDate      DateTime? @db.Date
+  receivedAt      DateTime  @default(now()) @db.Timestamptz
+
+  inventoryItem InventoryItem     @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  location      InventoryLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+
+  @@index([inventoryItemId, locationId, expiryDate])
+  @@map("stock_batches")
+}
+
+enum MovementType {
+  OPENING
+  PURCHASE_RECEIPT
+  RECIPE_CONSUMPTION
+  MANUAL_ADJUSTMENT
+  TRANSFER
+  WASTAGE
+  RETURN
+}
+
+model StockMovement {
+  id              String       @id @default(uuid())
+  inventoryItemId String
+  locationId      String
+  performedById   String
+  type            MovementType
+  quantity        Decimal      @db.Decimal(12, 4) // Positive for IN, Negative for OUT
+  unitCost        Decimal      @db.Decimal(12, 2)
+  totalCost       Decimal      @db.Decimal(12, 2)
+  referenceType   String?      @db.VarChar(50) // e.g. POS_ORDER, GRN, WASTAGE_LOG
+  referenceId     String?      @db.VarChar(100)
+  notes           String?      @db.Text
+  createdAt       DateTime     @default(now()) @db.Timestamptz
+
+  inventoryItem InventoryItem     @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+  location      InventoryLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  performedBy   User              @relation(fields: [performedById], references: [id], onDelete: Restrict)
+
+  @@index([inventoryItemId, locationId, createdAt])
+  @@index([referenceType, referenceId])
+  @@map("stock_movements")
+}
+
+// ==========================================
+// 7. RECIPE DOMAIN (BILL OF MATERIALS)
+// ==========================================
+
+model Recipe {
+  id            String   @id @default(uuid())
+  menuItemId    String
+  variantId     String?
+  yieldQuantity Decimal  @default(1.00) @db.Decimal(8, 2)
+  instructions  String?  @db.Text
+  createdAt     DateTime @default(now()) @db.Timestamptz
+
+  menuItem MenuItem         @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  variant  MenuItemVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  ingredients RecipeIngredient[]
+
+  @@unique([menuItemId, variantId])
+  @@map("recipes")
+}
+
+model RecipeIngredient {
+  id               String  @id @default(uuid())
+  recipeId         String
+  inventoryItemId  String
+  quantityRequired Decimal @db.Decimal(12, 4)
+  uom              String  @db.VarChar(20)
+
+  recipe        Recipe        @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+
+  @@map("recipe_ingredients")
+}
+
+// ==========================================
+// 8. PROCUREMENT DOMAIN
+// ==========================================
+
+model Supplier {
+  id            String   @id @default(uuid())
+  propertyId    String
+  name          String   @db.VarChar(100)
+  contactPerson String?  @db.VarChar(50)
+  email         String?  @db.VarChar(100)
+  phone         String   @db.VarChar(30)
+  taxId         String?  @db.VarChar(50)
+  address       String?  @db.Text
+  createdAt     DateTime @default(now()) @db.Timestamptz
+
+  property       Property        @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  purchaseOrders PurchaseOrder[]
+
+  @@map("suppliers")
+}
+
+enum PoStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_RECEIVED
+  COMPLETED
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id            String    @id @default(uuid())
+  propertyId    String
+  supplierId    String
+  approverId    String?
+  poNumber      String    @unique @db.VarChar(30)
+  status        PoStatus  @default(DRAFT)
+  totalAmount   Decimal   @db.Decimal(12, 2)
+  issuedAt      DateTime? @db.Timestamptz
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @db.Timestamptz
+
+  property Property  @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  supplier Supplier  @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  approver User?     @relation("PoApprover", fields: [approverId], references: [id], onDelete: SetNull)
+
+  items          PurchaseOrderItem[]
+  goodsReceipts  GoodsReceivingNote[]
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id              String  @id @default(uuid())
+  purchaseOrderId String
+  inventoryItemId String
+  quantityOrdered Decimal @db.Decimal(12, 4)
+  unitPrice       Decimal @db.Decimal(12, 2)
+  totalPrice      Decimal @db.Decimal(12, 2)
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Restrict)
+
+  grnItems GoodsReceivingNoteItem[]
+
+  @@map("purchase_order_items")
+}
+
+model GoodsReceivingNote {
+  id              String   @id @default(uuid())
+  purchaseOrderId String
+  grnNumber       String   @unique @db.VarChar(30)
+  receivedAt      DateTime @default(now()) @db.Timestamptz
+
+  purchaseOrder PurchaseOrder            @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  items         GoodsReceivingNoteItem[]
+
+  @@map("goods_receiving_notes")
+}
+
+model GoodsReceivingNoteItem {
+  id                  String    @id @default(uuid())
+  grnId               String
+  purchaseOrderItemId String
+  quantityReceived    Decimal   @db.Decimal(12, 4)
+  batchNumber         String?   @db.VarChar(50)
+  expiryDate          DateTime? @db.Date
+
+  grn               GoodsReceivingNote @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  purchaseOrderItem PurchaseOrderItem  @relation(fields: [purchaseOrderItemId], references: [id], onDelete: Restrict)
+
+  @@map("goods_receiving_note_items")
+}
+
+// ==========================================
+// 9. FINANCE, FOLIOS & PAYMENTS
+// ==========================================
+
+enum FolioStatus {
+  OPEN
+  CLOSED
+}
+
+model GuestFolio {
+  id            String      @id @default(uuid())
+  reservationId String      @unique
+  folioNumber   String      @unique @db.VarChar(30)
+  status        FolioStatus @default(OPEN)
+  totalCharges  Decimal     @default(0.00) @db.Decimal(12, 2)
+  totalPayments Decimal     @default(0.00) @db.Decimal(12, 2)
+  balance       Decimal     @default(0.00) @db.Decimal(12, 2)
+  createdAt     DateTime    @default(now()) @db.Timestamptz
+  updatedAt     DateTime    @updatedAt @db.Timestamptz
+
+  reservation Reservation        @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  items       FolioItem[]
+  posOrders   PosOrder[]
+  payments    Payment[]
+  invoices    Invoice[]
+
+  @@map("guest_folios")
+}
+
+enum TransactionType {
+  ROOM_CHARGE
+  POS_CHARGE
+  LAUNDRY
+  SERVICE_FEE
+  TAX
+  PAYMENT
+  REFUND
+  DISCOUNT
+}
+
+model FolioItem {
+  id            String          @id @default(uuid())
+  folioId       String
+  postedById    String
+  type          TransactionType
+  description   String          @db.VarChar(150)
+  amount        Decimal         @db.Decimal(12, 2) // Positive for charges, Negative for payments
+  referenceType String?         @db.VarChar(50) // e.g. POS_ORDER, RESERVATION_NIGHT
+  referenceId   String?         @db.VarChar(100)
+  createdAt     DateTime        @default(now()) @db.Timestamptz
+
+  folio    GuestFolio @relation(fields: [folioId], references: [id], onDelete: Cascade)
+  postedBy User       @relation(fields: [postedById], references: [id], onDelete: Restrict)
+
+  @@index([folioId, createdAt])
+  @@map("folio_items")
+}
+
+enum PaymentMethod {
+  MPESA
+  CARD
+  CASH
+  BANK_TRANSFER
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+model Payment {
+  id                String        @id @default(uuid())
+  propertyId        String
+  folioId           String?
+  posOrderId        String?
+  method            PaymentMethod
+  status            PaymentStatus @default(PENDING)
+  amount            Decimal       @db.Decimal(12, 2)
+  currency          String        @default("KES") @db.VarChar(10)
+  providerReference String?       @db.VarChar(100)
+  idempotencyKey    String?       @unique @db.VarChar(100)
+  createdAt         DateTime      @default(now()) @db.Timestamptz
+
+  property   Property    @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  guestFolio GuestFolio? @relation(fields: [folioId], references: [id], onDelete: SetNull)
+  posOrder   PosOrder?   @relation(fields: [posOrderId], references: [id], onDelete: SetNull)
+
+  mpesaTransaction MpesaTransaction?
+  receipt          Receipt?
+
+  @@index([propertyId, createdAt])
+  @@index([providerReference])
+  @@map("payments")
+}
+
+model MpesaTransaction {
+  id                 String   @id @default(uuid())
+  paymentId          String   @unique
+  merchantRequestId  String   @db.VarChar(100)
+  checkoutRequestId  String   @unique @db.VarChar(100)
+  mpesaReceiptNumber String?  @unique @db.VarChar(50)
+  phoneNumber        String   @db.VarChar(20)
+  amount             Decimal  @db.Decimal(12, 2)
+  status             String   @db.VarChar(20) // PENDING, SUCCESS, FAILED
+  resultCode         Int?
+  resultDesc         String?  @db.VarChar(255)
+  rawCallback        Json?
+  createdAt          DateTime @default(now()) @db.Timestamptz
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@map("mpesa_transactions")
+}
+
+model Invoice {
+  id            String   @id @default(uuid())
+  folioId       String
+  invoiceNumber String   @unique @db.VarChar(30)
+  subtotal      Decimal  @db.Decimal(12, 2)
+  taxAmount     Decimal  @db.Decimal(12, 2)
+  totalAmount   Decimal  @db.Decimal(12, 2)
+  pdfUrl        String?  @db.VarChar(255)
+  issuedAt      DateTime @default(now()) @db.Timestamptz
+
+  folio GuestFolio @relation(fields: [folioId], references: [id], onDelete: Restrict)
+
+  @@map("invoices")
+}
+
+model Receipt {
+  id            String   @id @default(uuid())
+  paymentId     String   @unique
+  receiptNumber String   @unique @db.VarChar(30)
+  amountPaid    Decimal  @db.Decimal(12, 2)
+  issuedAt      DateTime @default(now()) @db.Timestamptz
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@map("receipts")
+}
+
+model Expense {
+  id          String   @id @default(uuid())
+  propertyId  String
+  category    String   @db.VarChar(50) // UTILITIES, SALARIES, MAINTENANCE, SUPPLIES
+  description String   @db.VarChar(255)
+  amount      Decimal  @db.Decimal(12, 2)
+  expenseDate DateTime @db.Date
+  receiptUrl  String?  @db.VarChar(255)
+  createdAt   DateTime @default(now()) @db.Timestamptz
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+
+  @@index([propertyId, expenseDate])
+  @@map("expenses")
+}

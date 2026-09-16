@@ -1,0 +1,6 @@
+{
+  "name": "Servio Hospitality Management System",
+  "description": "Integrated hospitality operations platform combining Hotel PMS, Restaurant POS, Kitchen Management (KDS), Inventory, Guest Folios, Finance, and Reporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
