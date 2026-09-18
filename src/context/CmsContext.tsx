@@ -106,7 +106,9 @@ export interface CmsContextType {
   bookConfig: FounderBook;
   isAdminOpen: boolean;
   isAdminAuthenticated: boolean;
-  openAdmin: () => void;
+  adminInitialTab: 'hero' | 'media' | 'logos' | 'stories' | 'book' | 'company' | 'backup';
+  setAdminInitialTab: (tab: 'hero' | 'media' | 'logos' | 'stories' | 'book' | 'company' | 'backup') => void;
+  openAdmin: (tab?: 'hero' | 'media' | 'logos' | 'stories' | 'book' | 'company' | 'backup') => void;
   closeAdmin: () => void;
   loginAdmin: (username: string, password: string) => boolean;
   logoutAdmin: () => void;
@@ -117,6 +119,7 @@ export interface CmsContextType {
   updateGalleryItem: (id: string, updates: Partial<GalleryItem>) => void;
   deleteGalleryItem: (id: string) => void;
   addClientLogo: (logo: Omit<ClientLogoItem, 'id'>) => Promise<ClientLogoItem> | ClientLogoItem;
+  updateClientLogo: (id: string, updates: Partial<ClientLogoItem>) => Promise<boolean> | void;
   deleteClientLogo: (id: string) => Promise<void> | void;
   addSuccessStory: (story: Omit<SuccessStoryItem, 'id' | 'date'>) => Promise<SuccessStoryItem> | SuccessStoryItem;
   updateSuccessStory: (id: string, updates: Partial<SuccessStoryItem>) => Promise<boolean> | void;
@@ -263,12 +266,12 @@ const DEFAULT_GALLERY_ITEMS: GalleryItem[] = [
 ];
 
 const DEFAULT_CLIENT_LOGOS: ClientLogoItem[] = [
-  { id: 'logo-1', name: 'Kenya Commercial Bank', logoUrl: 'https://images.unsplash.com/photo-1541359902798-011504994843?auto=format&fit=crop&w=300&q=80', industry: 'Banking & Finance' },
-  { id: 'logo-2', name: 'East African Breweries', logoUrl: 'https://images.unsplash.com/photo-1563986768609-322da13575f3?auto=format&fit=crop&w=300&q=80', industry: 'Manufacturing' },
-  { id: 'logo-3', name: 'Safaricom Telemetry', logoUrl: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=300&q=80', industry: 'Telecommunications' },
-  { id: 'logo-4', name: 'Bamburi Cement', logoUrl: 'https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?auto=format&fit=crop&w=300&q=80', industry: 'Construction' },
-  { id: 'logo-5', name: 'Equity Group Holdings', logoUrl: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&w=300&q=80', industry: 'Financial Services' },
-  { id: 'logo-6', name: 'Nairobi Bottlers', logoUrl: 'https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=300&q=80', industry: 'FMCG' },
+  { id: 'logo-1', name: 'Kenya Commercial Bank', logoUrl: 'https://images.unsplash.com/photo-1541359902798-011504994843?auto=format&fit=crop&w=300&q=80', industry: 'Banking & Finance', caption: 'ISO 27001 & ISO 9001 Partner' },
+  { id: 'logo-2', name: 'East African Breweries', logoUrl: 'https://images.unsplash.com/photo-1563986768609-322da13575f3?auto=format&fit=crop&w=300&q=80', industry: 'Manufacturing', caption: 'ISO 22000 & HACCP Certified' },
+  { id: 'logo-3', name: 'Safaricom Telemetry', logoUrl: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=300&q=80', industry: 'Telecommunications', caption: 'ISO 22301 Business Continuity' },
+  { id: 'logo-4', name: 'Bamburi Cement', logoUrl: 'https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?auto=format&fit=crop&w=300&q=80', industry: 'Construction', caption: 'ISO 14001 & ISO 45001 HSE' },
+  { id: 'logo-5', name: 'Equity Group Holdings', logoUrl: 'https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&w=300&q=80', industry: 'Financial Services', caption: 'ISO 37001 Anti-Bribery System' },
+  { id: 'logo-6', name: 'Nairobi Bottlers', logoUrl: 'https://images.unsplash.com/photo-1507679799987-c73779587ccf?auto=format&fit=crop&w=300&q=80', industry: 'FMCG', caption: 'ISO 9001 Operations Certified' },
 ];
 
 const DEFAULT_SUCCESS_STORIES: SuccessStoryItem[] = [
@@ -487,6 +490,7 @@ export const CmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [blogPosts, setBlogPosts] = useState<BlogPostItem[]>(DEFAULT_BLOG_POSTS);
 
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
+  const [adminInitialTab, setAdminInitialTab] = useState<'hero' | 'media' | 'logos' | 'stories' | 'book' | 'company' | 'backup'>('hero');
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
     try {
       return localStorage.getItem(STORAGE_KEYS.AUTH) === 'true';
@@ -701,7 +705,10 @@ export const CmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
   }, []);
 
-  const openAdmin = () => setIsAdminOpen(true);
+  const openAdmin = (tab?: 'hero' | 'media' | 'logos' | 'stories' | 'book' | 'company' | 'backup') => {
+    if (tab) setAdminInitialTab(tab);
+    setIsAdminOpen(true);
+  };
   const closeAdmin = () => setIsAdminOpen(false);
 
   const loginAdmin = (username: string, password: string): boolean => {
@@ -924,6 +931,34 @@ export const CmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     })();
 
     return newLogo;
+  };
+
+  const updateClientLogo = async (id: string, updates: Partial<ClientLogoItem>): Promise<boolean> => {
+    let finalUrl = updates.logoUrl;
+    if (finalUrl && typeof finalUrl === 'string' && finalUrl.startsWith('data:image/')) {
+      try {
+        finalUrl = await uploadClientLogoToLiveStorage(finalUrl, updates.name || 'client');
+      } catch (err) {
+        console.warn('Direct Supabase logo upload notice on update:', err);
+      }
+    }
+
+    const nextLogos = clientLogosRef.current.map((item) =>
+      item.id === id ? { ...item, ...updates, ...(finalUrl ? { logoUrl: finalUrl } : {}) } : item
+    );
+    clientLogosRef.current = nextLogos;
+    setClientLogos(nextLogos);
+
+    const snapshot = getFullDatabaseSnapshot({ clientLogos: nextLogos });
+    await syncDatabaseToCloud(snapshot);
+
+    fetch(`/api/client-logos/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...updates, ...(finalUrl ? { logoUrl: finalUrl } : {}) }),
+    }).catch(() => {});
+
+    return true;
   };
 
   const deleteClientLogo = async (id: string) => {
@@ -1217,6 +1252,8 @@ export const CmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         bookConfig,
         isAdminOpen,
         isAdminAuthenticated,
+        adminInitialTab,
+        setAdminInitialTab,
         openAdmin,
         closeAdmin,
         loginAdmin,
@@ -1228,6 +1265,7 @@ export const CmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateGalleryItem,
         deleteGalleryItem,
         addClientLogo,
+        updateClientLogo,
         deleteClientLogo,
         addSuccessStory,
         updateSuccessStory,

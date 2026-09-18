@@ -54,6 +54,7 @@ export const AdminBackend: React.FC = () => {
     updateGalleryItem,
     deleteGalleryItem,
     addClientLogo,
+    updateClientLogo,
     deleteClientLogo,
     addSuccessStory,
     updateSuccessStory,
@@ -72,9 +73,16 @@ export const AdminBackend: React.FC = () => {
     isSavingToDatabase,
     lastDatabaseSync,
     manualDatabaseSync,
+    adminInitialTab,
   } = useCms();
 
-  const [activeTab, setActiveTab] = useState<'hero' | 'media' | 'logos' | 'stories' | 'book' | 'company' | 'backup'>('hero');
+  const [activeTab, setActiveTab] = useState<'hero' | 'media' | 'logos' | 'stories' | 'book' | 'company' | 'backup'>(adminInitialTab || 'hero');
+
+  useEffect(() => {
+    if (adminInitialTab) {
+      setActiveTab(adminInitialTab);
+    }
+  }, [adminInitialTab, isAdminOpen]);
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState(false);
@@ -116,10 +124,14 @@ export const AdminBackend: React.FC = () => {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
-  // Client Logo upload state
+  // Client Logo upload & edit state
+  const [editingLogoId, setEditingLogoId] = useState<string | null>(null);
   const [newLogoName, setNewLogoName] = useState('');
   const [newLogoIndustry, setNewLogoIndustry] = useState('');
+  const [newLogoCaption, setNewLogoCaption] = useState('');
   const [newLogoUrl, setNewLogoUrl] = useState('');
+  const [quickReplaceClientId, setQuickReplaceClientId] = useState<string | null>(null);
+  const quickReplaceLogoInputRef = useRef<HTMLInputElement>(null);
 
   // Success Story form state
   const [editingStoryId, setEditingStoryId] = useState<string | null>(null);
@@ -389,6 +401,49 @@ export const AdminBackend: React.FC = () => {
     }
   };
 
+  const handleStartEditLogo = (client: any) => {
+    setEditingLogoId(client.id);
+    setNewLogoName(client.name);
+    setNewLogoIndustry(client.industry || '');
+    setNewLogoCaption(client.caption || '');
+    setNewLogoUrl(client.logoUrl);
+    setUploadError(null);
+  };
+
+  const handleCancelEditLogo = () => {
+    setEditingLogoId(null);
+    setNewLogoName('');
+    setNewLogoIndustry('');
+    setNewLogoCaption('');
+    setNewLogoUrl('');
+    setUploadError(null);
+  };
+
+  const handleQuickReplaceLogoImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !quickReplaceClientId) return;
+
+    if (file.size > 20 * 1024 * 1024) {
+      showToast('File size must be under 20MB.');
+      return;
+    }
+
+    const client = clientLogos.find((c) => c.id === quickReplaceClientId);
+    const targetName = client?.name || 'client';
+    showToast(`Uploading new logo image for ${targetName}...`);
+    try {
+      const publicUrl = await uploadClientLogoToStorage(file, targetName);
+      await updateClientLogo(quickReplaceClientId, { logoUrl: publicUrl });
+      showToast(`Updated logo image for "${targetName}"!`);
+    } catch (err: any) {
+      console.error('Failed to replace logo image:', err);
+      showToast('Upload error: failed to update image');
+    } finally {
+      setQuickReplaceClientId(null);
+      if (e.target) e.target.value = '';
+    }
+  };
+
   const handleAddClientLogo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newLogoName || !newLogoUrl) {
@@ -411,13 +466,27 @@ export const AdminBackend: React.FC = () => {
       }
     }
 
-    addClientLogo({
+    if (editingLogoId) {
+      await updateClientLogo(editingLogoId, {
+        name: newLogoName,
+        industry: newLogoIndustry || 'Enterprise & Banking',
+        caption: newLogoCaption,
+        logoUrl: resolvedLogoUrl,
+      });
+      showToast(`Updated "${newLogoName}" logo & caption!`);
+      handleCancelEditLogo();
+      return;
+    }
+
+    await addClientLogo({
       name: newLogoName,
       industry: newLogoIndustry || 'Enterprise & Banking',
+      caption: newLogoCaption,
       logoUrl: resolvedLogoUrl,
     });
     setNewLogoName('');
     setNewLogoIndustry('');
+    setNewLogoCaption('');
     setNewLogoUrl('');
     setUploadError(null);
     showToast('Client logo saved and synchronized to cloud database!');
@@ -1403,20 +1472,54 @@ export const AdminBackend: React.FC = () => {
                   ========================================================================= */}
               {activeTab === 'logos' && (
                 <div className="space-y-8">
+                  {/* Hidden file input for single-click quick logo image replacement */}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    ref={quickReplaceLogoInputRef}
+                    onChange={handleQuickReplaceLogoImage}
+                    className="hidden"
+                  />
+
                   <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
                     <div>
                       <h4 className="text-lg font-bold">Client Logo Carousel & Partner Brands</h4>
                       <p className="text-xs text-slate-400">
-                        Upload and manage certified client partner logos displayed in the marquee carousel below the hero section.
+                        Upload and manage certified client partner logos, captions, and branding displayed in the marquee carousel.
                       </p>
                     </div>
                   </div>
 
-                  {/* Add New Logo Form */}
-                  <div className="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 space-y-5">
-                    <div className="flex items-center gap-2 text-sm font-bold text-[#00A9CF]">
-                      <Award className="w-5 h-5" />
-                      <span>Upload New Client Partner Logo</span>
+                  {/* Add / Edit Logo Form */}
+                  <div className={`p-6 rounded-2xl border transition-all space-y-5 ${
+                    editingLogoId
+                      ? 'border-amber-400/50 bg-amber-500/5 shadow-lg'
+                      : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-sm font-bold">
+                        {editingLogoId ? (
+                          <>
+                            <Pencil className="w-5 h-5 text-amber-400" />
+                            <span className="text-amber-400">Edit Client Partner Logo & Caption</span>
+                          </>
+                        ) : (
+                          <>
+                            <Award className="w-5 h-5 text-[#00A9CF]" />
+                            <span className="text-[#00A9CF]">Upload New Client Partner Logo</span>
+                          </>
+                        )}
+                      </div>
+                      {editingLogoId && (
+                        <button
+                          type="button"
+                          onClick={handleCancelEditLogo}
+                          className="text-xs font-semibold text-slate-300 hover:text-white px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 transition-colors flex items-center gap-1.5"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          <span>Cancel Edit</span>
+                        </button>
+                      )}
                     </div>
 
                     <form onSubmit={handleAddClientLogo} className="space-y-4">
@@ -1450,6 +1553,19 @@ export const AdminBackend: React.FC = () => {
 
                       <div>
                         <label className="block text-xs font-bold text-slate-300 mb-1">
+                          Caption / Certification Highlight (Displayed in Carousel Marquee)
+                        </label>
+                        <input
+                          type="text"
+                          value={newLogoCaption}
+                          onChange={(e) => setNewLogoCaption(e.target.value)}
+                          placeholder="e.g. ISO 27001 & ISO 9001 Enterprise Partner"
+                          className="w-full px-3.5 py-2.5 rounded-xl border text-xs bg-slate-900 border-slate-700 text-white placeholder:text-slate-500"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-300 mb-1">
                           Logo Image File (Upload from device or CDN URL) *
                         </label>
                         <div className="flex gap-3">
@@ -1466,7 +1582,7 @@ export const AdminBackend: React.FC = () => {
                             className="py-2.5 px-4 rounded-xl border border-dashed border-slate-700 hover:border-[#00A9CF] bg-slate-900/80 text-xs font-bold text-slate-300 flex items-center gap-2 transition-all"
                           >
                             <Upload className="w-4 h-4 text-[#00A9CF]" />
-                            <span>Browse File...</span>
+                            <span>Browse Image File...</span>
                           </button>
                           <input
                             type="url"
@@ -1480,7 +1596,7 @@ export const AdminBackend: React.FC = () => {
 
                       {newLogoUrl && (
                         <div className="flex items-center gap-4 p-3.5 rounded-xl bg-slate-950 border border-slate-800">
-                          <div className="w-12 h-12 rounded-lg overflow-hidden bg-slate-900 flex items-center justify-center border border-slate-700 flex-shrink-0 p-1">
+                          <div className="w-14 h-14 rounded-lg overflow-hidden bg-slate-900 flex items-center justify-center border border-slate-700 flex-shrink-0 p-1.5">
                             <img src={newLogoUrl} alt="Preview" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                           </div>
                           <div className="min-w-0 flex-1">
@@ -1505,14 +1621,35 @@ export const AdminBackend: React.FC = () => {
                         </div>
                       )}
 
-                      <button
-                        type="submit"
-                        disabled={isUploading}
-                        className="py-3 px-6 rounded-xl font-bold text-xs text-slate-950 bg-[#00A9CF] hover:bg-[#0096C7] transition-all flex items-center gap-2 shadow-md active:scale-95 disabled:opacity-50"
-                      >
-                        <Plus className="w-4 h-4 text-slate-950" />
-                        <span>{isUploading ? 'Uploading to Supabase...' : 'Add to Client Logo Carousel'}</span>
-                      </button>
+                      <div className="flex items-center gap-3 pt-1">
+                        <button
+                          type="submit"
+                          disabled={isUploading}
+                          className={`py-3 px-6 rounded-xl font-bold text-xs transition-all flex items-center gap-2 shadow-md active:scale-95 disabled:opacity-50 ${
+                            editingLogoId
+                              ? 'bg-amber-400 hover:bg-amber-300 text-slate-950'
+                              : 'bg-[#00A9CF] hover:bg-[#0096C7] text-slate-950'
+                          }`}
+                        >
+                          {editingLogoId ? <Save className="w-4 h-4 text-slate-950" /> : <Plus className="w-4 h-4 text-slate-950" />}
+                          <span>
+                            {isUploading
+                              ? 'Uploading to Supabase...'
+                              : editingLogoId
+                              ? 'Save Logo & Caption Changes'
+                              : 'Add to Client Logo Carousel'}
+                          </span>
+                        </button>
+                        {editingLogoId && (
+                          <button
+                            type="button"
+                            onClick={handleCancelEditLogo}
+                            className="py-3 px-4 rounded-xl text-xs font-semibold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </div>
                     </form>
                   </div>
 
@@ -1554,25 +1691,44 @@ USING (bucket_id = 'client-logos');`}
 
                   {/* Existing Logos Grid */}
                   <div className="space-y-4">
-                    <h4 className="text-sm font-bold text-slate-300 uppercase tracking-wider">
-                      Active Client Logos in Carousel ({clientLogos.length})
-                    </h4>
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-bold text-slate-300 uppercase tracking-wider">
+                        Active Client Logos in Carousel ({clientLogos.length})
+                      </h4>
+                      <span className="text-xs text-slate-400">
+                        Click pencil to edit or upload icon to replace image directly
+                      </span>
+                    </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {clientLogos.map((client) => (
                         <div
                           key={client.id}
-                          className="p-4 rounded-xl border border-slate-700 bg-slate-900 space-y-3"
+                          className={`p-4 rounded-xl border transition-colors space-y-3 ${
+                            editingLogoId === client.id
+                              ? 'border-amber-400/80 bg-amber-500/10 shadow-md'
+                              : 'border-slate-700 bg-slate-900'
+                          }`}
                         >
-                          <div className="flex items-center justify-between gap-4">
+                          <div className="flex items-start justify-between gap-4">
                             <div className="flex items-center gap-3">
-                              <div className="w-12 h-12 rounded-lg overflow-hidden bg-slate-800 flex items-center justify-center border border-slate-600 flex-shrink-0 p-1">
+                              <div className="w-14 h-14 rounded-lg overflow-hidden bg-slate-800 flex items-center justify-center border border-slate-600 flex-shrink-0 p-1.5 shadow-inner">
                                 <img src={client.logoUrl} alt={client.name} className="w-full h-full object-contain" referrerPolicy="no-referrer" />
                               </div>
                               <div>
-                                <div className="text-xs font-bold text-white">{client.name}</div>
+                                <div className="text-xs font-bold text-white flex items-center gap-2">
+                                  <span>{client.name}</span>
+                                  {editingLogoId === client.id && (
+                                    <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-400 text-slate-950">Editing</span>
+                                  )}
+                                </div>
+                                {client.caption && (
+                                  <div className="text-[11px] font-medium text-[#00A9CF] mt-0.5">
+                                    {client.caption}
+                                  </div>
+                                )}
                                 <div className="text-[10px] text-slate-300">{client.industry || 'Enterprise'}</div>
-                                <div className="mt-1">
+                                <div className="mt-1 flex items-center gap-2">
                                   {client.logoUrl.includes('supabase.co') ? (
                                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                                       <span className="w-1 h-1 rounded-full bg-emerald-400"></span>
@@ -1587,24 +1743,51 @@ USING (bucket_id = 'client-logos');`}
                               </div>
                             </div>
 
-                            <button
-                              onClick={() => {
-                                if (confirm(`Remove "${client.name}" logo?`)) {
-                                  deleteClientLogo(client.id);
-                                  showToast('Client logo removed from database');
-                                }
-                              }}
-                              className="p-2 text-slate-300 hover:text-rose-400 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
-                              title="Delete logo"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setQuickReplaceClientId(client.id);
+                                  quickReplaceLogoInputRef.current?.click();
+                                }}
+                                className="p-2 text-slate-300 hover:text-[#00A9CF] bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+                                title="Upload new image for this logo"
+                              >
+                                <Upload className="w-4 h-4" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleStartEditLogo(client)}
+                                className="p-2 text-slate-300 hover:text-amber-400 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+                                title="Edit logo, caption & details"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (confirm(`Remove "${client.name}" logo?`)) {
+                                    deleteClientLogo(client.id);
+                                    if (editingLogoId === client.id) handleCancelEditLogo();
+                                    showToast('Client logo removed from database');
+                                  }
+                                }}
+                                className="p-2 text-slate-300 hover:text-rose-400 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+                                title="Delete logo"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
                           </div>
 
-                          <div className="pt-2 border-t border-slate-800">
-                            <span className="text-[10px] font-mono text-slate-400 block mb-0.5">Database Source URL:</span>
-                            <div className="text-[10px] font-mono text-sky-300 bg-slate-950 p-1.5 rounded border border-slate-800 truncate select-all">
-                              {client.logoUrl}
+                          <div className="pt-2 border-t border-slate-800 flex items-center justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <span className="text-[10px] font-mono text-slate-400 block mb-0.5">Database Source URL:</span>
+                              <div className="text-[10px] font-mono text-sky-300 bg-slate-950 p-1.5 rounded border border-slate-800 truncate select-all">
+                                {client.logoUrl}
+                              </div>
                             </div>
                           </div>
                         </div>
