@@ -1,26 +1,16 @@
 /// <reference types="vite/client" />
 
 declare module '*.jpg' {
-  const content: string;
-  export default content;
+  const value: string;
+  export default value;
 }
 
 declare module '*.png' {
-  const content: string;
-  export default content;
-}
-
-declare module '*.webp' {
-  const content: string;
-  export default content;
+  const value: string;
+  export default value;
 }
 
 declare module '*.svg' {
-  const content: string;
-  export default content;
-}
-
-declare module '*.mp4' {
-  const content: string;
-  export default content;
+  const value: string;
+  export default value;
 }
