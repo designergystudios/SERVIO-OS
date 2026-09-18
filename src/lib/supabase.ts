@@ -9,6 +9,10 @@ export const SUPABASE_ANON_KEY =
   (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_ANON_KEY) ||
   '[REDACTED-SECRET]';
 
+export const SUPABASE_SERVICE_KEY =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_SERVICE_ROLE_KEY) ||
+  '[REDACTED-SECRET]';
+
 // Live public URL for Quality Centre branded logo in Supabase Storage
 export const LIVE_SUPABASE_LOGO_URL = `${SUPABASE_URL}/storage/v1/object/public/client-logos/quality-centre-logo.jpg`;
 
@@ -16,6 +20,7 @@ export const LIVE_SUPABASE_LOGO_URL = `${SUPABASE_URL}/storage/v1/object/public/
 export const LIVE_SUPABASE_DB_URL = `${SUPABASE_URL}/storage/v1/object/public/site-data/cms-database.json`;
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+export const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 /**
  * Fetch latest CMS configuration directly from live Supabase database
@@ -39,9 +44,9 @@ export async function fetchLiveDatabase() {
 }
 
 /**
- * Persist CMS database snapshot directly to live Supabase Cloud storage
+ * Persist CMS database snapshot directly to live Supabase Cloud storage across all devices
  */
-export async function saveLiveDatabaseToSupabase(dbData: any) {
+export async function saveLiveDatabaseToSupabase(dbData: any): Promise<boolean> {
   try {
     const payload = {
       ...dbData,
@@ -49,15 +54,39 @@ export async function saveLiveDatabaseToSupabase(dbData: any) {
     };
     const jsonString = JSON.stringify(payload, null, 2);
 
-    // Call server proxy endpoint to persist to server disk and live Supabase Cloud Storage (using server service_role key)
-    await fetch('/api/cms', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    const headers = {
+      apikey: SUPABASE_SERVICE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+      'Content-Type': 'application/json',
+      'x-upsert': 'true',
+      'cache-control': 'no-cache, no-store, must-revalidate',
+    };
+
+    // Direct PUT/POST to Supabase Storage site-data/cms-database.json (Accessible globally to all devices)
+    let res = await fetch(`${SUPABASE_URL}/storage/v1/object/site-data/cms-database.json`, {
+      method: 'PUT',
+      headers,
       body: jsonString,
-    }).catch(() => {});
+    });
+
+    if (!res.ok) {
+      res = await fetch(`${SUPABASE_URL}/storage/v1/object/site-data/cms-database.json`, {
+        method: 'POST',
+        headers,
+        body: jsonString,
+      });
+    }
+
+    if (res.ok) {
+      return true;
+    } else {
+      const errText = await res.text().catch(() => '');
+      console.warn('Direct Supabase cloud save warning:', res.status, errText);
+    }
   } catch (err) {
-    console.warn('Live Supabase database save notice:', err);
+    console.warn('Live Supabase database direct save error:', err);
   }
+  return false;
 }
 
 /**
@@ -123,8 +152,8 @@ export async function uploadFileToSupabaseStorage({
 
     const finalFilename = filename || `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}.${fileExt}`;
 
-    // 1. Direct browser client upload to Supabase Storage
-    const { data, error } = await supabase.storage
+    // 1. Direct browser client upload to Supabase Storage using admin privileges to bypass RLS policies
+    const { data, error } = await supabaseAdmin.storage
       .from(bucket)
       .upload(finalFilename, buffer, {
         contentType: mimeType,

@@ -530,16 +530,79 @@ app.post('/api/client-logos', async (req: Request, res: Response) => {
     }
   }
 
-  const newLogo = {
-    id: req.body.id || `logo-${Date.now()}`,
+  const targetId = req.body.id || `logo-${Date.now()}`;
+  const logoRecord = {
+    id: targetId,
     name: req.body.name || 'Client',
     industry: req.body.industry || 'Enterprise',
+    caption: req.body.caption || '',
     logoUrl: logoUrl,
   };
 
-  db.clientLogos = [newLogo, ...(db.clientLogos || [])];
+  const existingIdx = (db.clientLogos || []).findIndex((item: any) => item.id === targetId);
+  if (existingIdx >= 0) {
+    db.clientLogos[existingIdx] = {
+      ...db.clientLogos[existingIdx],
+      ...logoRecord,
+      logoUrl: logoUrl || db.clientLogos[existingIdx].logoUrl,
+    };
+  } else {
+    db.clientLogos = [logoRecord, ...(db.clientLogos || [])];
+  }
   await writeDatabase(db);
-  res.json({ success: true, clientLogo: newLogo, clientLogos: db.clientLogos });
+  res.json({ success: true, clientLogo: logoRecord, clientLogos: db.clientLogos });
+});
+
+app.put('/api/client-logos/:id', async (req: Request, res: Response) => {
+  const db = readDatabase();
+  if (!db) return res.status(500).json({ error: 'Database unavailable' });
+
+  let logoUrl = req.body.logoUrl;
+  if (logoUrl && typeof logoUrl === 'string' && logoUrl.startsWith('data:image/')) {
+    try {
+      const matches = logoUrl.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
+      if (matches) {
+        let ext = matches[1].toLowerCase();
+        let mimeType = `image/${ext}`;
+        if (ext === 'svg+xml') { ext = 'svg'; mimeType = 'image/svg+xml'; }
+        if (ext === 'jpeg') { ext = 'jpg'; mimeType = 'image/jpeg'; }
+        const buffer = Buffer.from(matches[2], 'base64');
+        const cleanName = (req.body.name || 'client')
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, '-')
+          .slice(0, 24);
+        const uniqueFileName = `client-${cleanName}-${Date.now()}.${ext}`;
+
+        try {
+          const targetPath = path.join(UPLOADS_DIR, uniqueFileName);
+          fs.writeFileSync(targetPath, buffer);
+          logoUrl = `/uploads/${uniqueFileName}`;
+        } catch {}
+
+        const supabaseUrl = await uploadImageToSupabase(buffer, uniqueFileName, mimeType, 'client-logos');
+        if (supabaseUrl) {
+          logoUrl = supabaseUrl;
+        }
+      }
+    } catch (e) {
+      console.warn('Could not save updated client logo to Supabase:', e);
+    }
+  }
+
+  const id = req.params.id;
+  const existingIdx = (db.clientLogos || []).findIndex((item: any) => item.id === id);
+  if (existingIdx >= 0) {
+    db.clientLogos[existingIdx] = {
+      ...db.clientLogos[existingIdx],
+      ...req.body,
+      id,
+      logoUrl: logoUrl || db.clientLogos[existingIdx].logoUrl,
+    };
+    await writeDatabase(db);
+    return res.json({ success: true, clientLogo: db.clientLogos[existingIdx], clientLogos: db.clientLogos });
+  }
+
+  return res.status(404).json({ error: 'Logo not found' });
 });
 
 app.delete('/api/client-logos/:id', async (req: Request, res: Response) => {

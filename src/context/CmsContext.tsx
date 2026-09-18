@@ -59,6 +59,7 @@ export interface ClientLogoItem {
   name: string;
   logoUrl: string;
   industry?: string;
+  caption?: string;
 }
 
 export interface SuccessStoryItem {
@@ -142,8 +143,8 @@ const DEFAULT_BOOK_CONFIG: FounderBook = FOUNDER_BOOK;
 const DEFAULT_HERO_CONFIG: HeroConfig = {
   headline: 'Empowering success by making business processes run faster, easier, and better.',
   subheadline:
-    'Transforming ISO, Risk, GRC, and Sustainability requirements into high-performing, digitally-enabled operating systems across Kenya & East Africa.',
-  badgeText: 'KENYA & PAN-AFRICA ISO ADVISORY',
+    'Quality Centre transforms ISO, risk, GRC, and ESG/sustainability requirements into high-performing, digitally-enabled operating systems across Africa & beyond.',
+  badgeText: '',
   videoUrl:
     'https://assets.mixkit.co/videos/preview/mixkit-digital-animation-of-screens-with-graphs-and-data-31913-large.mp4',
   fallbackVideoUrl:
@@ -152,7 +153,7 @@ const DEFAULT_HERO_CONFIG: HeroConfig = {
   bgMode: 'video',
   videoOpacity: 0.35,
   ctaPrimaryText: 'Explore Solutions',
-  ctaSecondaryText: 'Book ISO Audit',
+  ctaSecondaryText: 'Talk to our expert',
 };
 
 const DEFAULT_COMPANY_CONFIG: CompanyConfig = {
@@ -545,17 +546,31 @@ export const CmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     let saved = false;
     try {
-      const res = await fetch('/api/cms', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache, no-store',
-        },
-        body: JSON.stringify(snapshot),
-      });
-
-      if (res.ok) {
+      // 1. Direct Cloud Persistence to Supabase (site-data/cms-database.json)
+      // This is the global single source of truth across all devices, platforms, and URLs
+      const cloudOk = await saveLiveDatabaseToSupabase(snapshot);
+      if (cloudOk) {
         saved = true;
+      }
+
+      // 2. Also notify backend Express container if available in current runtime
+      try {
+        const res = await fetch('/api/cms', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache, no-store',
+          },
+          body: JSON.stringify(snapshot),
+        });
+        if (res.ok) {
+          saved = true;
+        }
+      } catch {
+        // Express proxy optional
+      }
+
+      if (saved) {
         setIsDatabaseConnected(true);
         setLastDatabaseSync(new Date());
       }
@@ -591,7 +606,7 @@ export const CmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
       if (res.ok) {
         const apiData = await res.json();
-        if (apiData) {
+        if (apiData && apiData.successStories) {
           if (!latestData) {
             latestData = apiData;
           } else {
@@ -625,24 +640,41 @@ export const CmsProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           cfg.logoUrl = LIVE_SUPABASE_LOGO_URL;
           cfg.logoType = 'custom';
         }
+        companyConfigRef.current = cfg;
         setCompanyConfig(cfg);
       }
       if (latestData.heroConfig) {
+        if (!latestData.heroConfig.ctaSecondaryText || latestData.heroConfig.ctaSecondaryText === 'Book ISO Audit') {
+          latestData.heroConfig.ctaSecondaryText = 'Talk to our expert';
+        }
+        if (!latestData.heroConfig.subheadline || latestData.heroConfig.subheadline.startsWith('Transforming ISO')) {
+          latestData.heroConfig.subheadline =
+            'Quality Centre transforms ISO, risk, GRC, and ESG/sustainability requirements into high-performing, digitally-enabled operating systems across Africa & beyond.';
+        }
+        if (latestData.heroConfig.badgeText && latestData.heroConfig.badgeText.toLowerCase().includes('pan-africa')) {
+          latestData.heroConfig.badgeText = '';
+        }
+        heroConfigRef.current = latestData.heroConfig;
         setHeroConfig(latestData.heroConfig);
       }
       if (Array.isArray(latestData.clientLogos)) {
+        clientLogosRef.current = latestData.clientLogos;
         setClientLogos(latestData.clientLogos);
       }
       if (Array.isArray(latestData.successStories)) {
+        successStoriesRef.current = latestData.successStories;
         setSuccessStories(latestData.successStories);
       }
       if (Array.isArray(latestData.galleryItems)) {
+        galleryItemsRef.current = latestData.galleryItems;
         setGalleryItems(latestData.galleryItems);
       }
       if (Array.isArray(latestData.blogPosts)) {
+        blogPostsRef.current = latestData.blogPosts;
         setBlogPosts(latestData.blogPosts);
       }
       if (latestData.bookConfig) {
+        bookConfigRef.current = latestData.bookConfig;
         setBookConfig(latestData.bookConfig);
       }
     } else {

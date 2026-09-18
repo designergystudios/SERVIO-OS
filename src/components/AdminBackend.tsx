@@ -1114,6 +1114,33 @@ export const AdminBackend: React.FC = () => {
                         className="w-full px-3.5 py-2.5 rounded-xl border text-sm leading-relaxed bg-slate-900 border-slate-700 text-white"
                       />
                     </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                          Primary Button Label
+                        </label>
+                        <input
+                          type="text"
+                          value={heroDraft.ctaPrimaryText || ''}
+                          onChange={(e) => setHeroDraft({ ...heroDraft, ctaPrimaryText: e.target.value })}
+                          placeholder="Explore Solutions"
+                          className="w-full px-3.5 py-2.5 rounded-xl border text-sm bg-slate-900 border-slate-700 text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold uppercase tracking-wider text-slate-300 mb-1">
+                          Secondary Button Label
+                        </label>
+                        <input
+                          type="text"
+                          value={heroDraft.ctaSecondaryText || ''}
+                          onChange={(e) => setHeroDraft({ ...heroDraft, ctaSecondaryText: e.target.value })}
+                          placeholder="Talk to our expert"
+                          className="w-full px-3.5 py-2.5 rounded-xl border text-sm bg-slate-900 border-slate-700 text-white"
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
